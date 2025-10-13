@@ -705,7 +705,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 '''
 
                 #'''
-                htorch.core.mark_step()
+                #htorch.core.mark_step()
                
 
                 block_list = attn_metadata.block_list if attn_metadata \
@@ -747,7 +747,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 #valid_seq_lengths=attn_metadata.seq_lens_tensor,
                 **common_args)
             #'''
-            htorch.core.mark_step()
+            #htorch.core.mark_step()
             prompt_output = out.reshape(prefill_batch_size, prefill_seq_len,
                                         prefill_hidden_size)
         htorch.core.mark_step()
@@ -779,6 +779,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 keys_fetch_func=self.k_cache.fetch_from_cache_chunked_prefill,#self.k_cache.fetch_from_cache,
                 values_fetch_func=self.v_cache.fetch_from_cache_chunked_prefill)#self.v_cache.fetch_from_cache)
             '''
+            '''
             decode_output = HPUPagedAttention.forward_decode(
                 query=attn_data.query,
                 key_cache=attn_data.key_cache,
@@ -786,7 +787,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 block_list=attn_metadata.decode_block_list,
                 block_mapping=attn_metadata.block_mapping,
                 block_bias=attn_metadata.decode_attn_bias,
-                block_scales=attn_metadata.block_scales,
+                #block_scales=attn_metadata.block_scales,
                 block_groups=attn_metadata.block_groups,
                 scale=self.scale,
                 matmul_qk_op=self.matmul_qk,
@@ -795,7 +796,17 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 block2batch_matmul_op=self.block2batch_matmul,
                 keys_fetch_func=self.k_cache.fetch_from_cache,#self.k_cache.fetch_from_cache,
                 values_fetch_func=self.v_cache.fetch_from_cache)#self.v_cache.fetch_from_cache)
-            
+            '''
+            decode_output = HPUPagedAttention.forward_decode(
+                #query=attn_data.query.view(1,1,4096),
+                query=attn_data.query.view(attn_data.batch_size, attn_data.seq_len, attn_data.hidden_size),
+                block_mapping=attn_metadata.block_mapping,
+                block_bias=attn_metadata.decode_attn_bias,
+                block_groups=attn_metadata.block_groups,
+                position_bias=None,
+                **self.common_attention_args(attn_metadata.decode_block_list, attn_data.key_cache,
+                                             attn_data.value_cache,
+                                             attn_metadata.block_size))
         htorch.core.mark_step()
         # Reshape the output tensor.
         if decode_output is None:

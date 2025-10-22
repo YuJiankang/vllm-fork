@@ -625,10 +625,7 @@ def _greedy_sample(
         same as the length of selected_seq_groups. If the corresponding
         seq_group has do_sample=False, tuple contains ([], [])
     """
-    #samples_=samples.to("cpu")
-    #print(f"{samples_=}")
-    #samples_lst = samples.tolist()
-    samples_lst = [578]
+    samples_lst = samples.tolist()
     sample_idx = 0
     results: SampleResultType = []
     for seq_group in selected_seq_groups:

@@ -411,11 +411,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
         self.fused_scaled_dot_product_attention = None if HPUFusedSDPA is None \
             else ModuleFusedSDPA(HPUFusedSDPA)
         self.prefill_impl = get_config().prompt_attn_impl
-        #self.prefill_impl = "naive_impl"
         self.use_contiguous_pa = get_config().use_contiguous_pa
-
-        #print(f"========={self.prefill_impl=}")
-        #print(f"========={self.use_contiguous_pa=}")
 
         if alibi_slopes is not None:
             assert self.prefill_impl != 'flex_impl', \
@@ -520,16 +516,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
             # Reshape the input keys and values and store them in the cache.
             # If kv_cache is not provided, the new key and value tensors are
             # not cached. This happens during the initial memory profiling run.
-            '''
-            attn_data.key_cache = self.k_cache(key,
-                                               key_cache,
-                                               slot_mapping,
-                                               chunk_prefill_enabled=True)
-            attn_data.value_cache = self.v_cache(value,
-                                                 value_cache,
-                                                 slot_mapping,
-                                                 chunk_prefill_enabled=True)
-            '''
+
             attn_data.key_cache = self.k_cache(key,
                                                key_cache,
                                                slot_mapping)
@@ -591,25 +578,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                         self.num_kv_heads, self.head_size)
              
             if attn_metadata is None or attn_metadata.block_list is None:
-                '''
-                if (not self.prefill_use_fusedsdpa
-                        and not self.prefill_use_flex_attention):
-                    # TODO: move this outside of model
-                    assert attn_metadata.attn_bias is not None, \
-                            'attn_bias must be set before calling model.forward'
-                    attn_bias = attn_metadata.attn_bias
-                    if self.alibi_slopes is not None:
-                        position_bias = _make_alibi_bias(
-                            self.alibi_slopes, self.num_kv_heads,
-                            attn_bias.dtype, attn_bias.shape[-1])
-                        attn_bias = attn_bias.tile(
-                            (1, self.num_kv_heads, 1, 1))
-                        attn_bias.add_(position_bias)
-                else:
-                    attn_bias = attn_metadata.attn_bias#None
-                '''
 
-                #'''
                 block_list = attn_metadata.block_list if attn_metadata \
                 and attn_metadata.block_list is not None else None
 
@@ -625,89 +594,12 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 key=key.view(kv_shape),
                 value=value.view(kv_shape),
                 is_causal=True,
-                #attn_bias=attn_bias,
                 position_bias=position_bias,
                 valid_seq_lengths=attn_metadata.seq_lens_tensor,
                 **common_args)
 
-                htorch.core.mark_step()
-
-                #'''
-                
-                '''
-                attn_bias = attn_metadata.attn_bias
-                if 1:#not self.prefill_use_flex_attention:
-                    out = ops.prompt_attention(
-                        attn_data.query.view(query_shape),
-                        attn_data.key.view(kv_shape),
-                        attn_data.value.view(kv_shape),
-                        attn_bias=attn_bias,
-                        p=0.0,
-                        scale=self.scale,
-                        matmul_qk_op=self.matmul_qk,
-                        softmax_op=self.softmax,
-                        matmul_av_op=self.matmul_av,
-                        valid_seq_lengths=attn_metadata.seq_lens_tensor,
-                        fsdpa_op=self.fused_scaled_dot_product_attention,
-                        #if self.prefill_use_fusedsdpa else None,
-                    )
-                else:
-                    out = ops.flex_attention(
-                        query.view(query_shape),
-                        key.view(kv_shape),
-                        value.view(kv_shape),
-                        scale=self.scale,
-                    )
-                '''
-
             else:
                 # TODO: enable FusedSDPA
-                '''
-                out = ops.prompt_attention(
-                    attn_data.query.view(query_shape),
-                    self.k_cache.fetch_from_cache_chunked_prefill(
-                        attn_data.key_cache,
-                        attn_metadata.block_list).view(kv_shape),
-                    self.v_cache.fetch_from_cache_chunked_prefill(
-                        attn_data.value_cache,
-                        attn_metadata.block_list).view(kv_shape),
-                    attn_bias=attn_metadata.attn_bias,
-                    p=0.0,
-                    scale=self.scale,
-                    matmul_qk_op=self.matmul_qk,
-                    softmax_op=self.softmax,
-                    matmul_av_op=self.matmul_av,
-                    valid_seq_lengths=attn_metadata.seq_lens_tensor,
-                    fsdpa_op=self.fused_scaled_dot_product_attention
-                    if self.prefill_use_fusedsdpa else None,
-                )
-                '''
-
-                '''
-                out = ops.prompt_attention(
-                    attn_data.query.view(query_shape),
-                    self.k_cache.fetch_from_cache(
-                        attn_data.key_cache,
-                        attn_metadata.block_list).view(kv_shape),
-                    self.v_cache.fetch_from_cache(
-                        attn_data.value_cache,
-                        attn_metadata.block_list).view(kv_shape),
-                    attn_bias=attn_metadata.attn_bias,
-                    p=0.0,
-                    scale=self.scale,
-                    matmul_qk_op=self.matmul_qk,
-                    softmax_op=self.softmax,
-                    matmul_av_op=self.matmul_av,
-                    valid_seq_lengths=attn_metadata.seq_lens_tensor,
-                    fsdpa_op=self.fused_scaled_dot_product_attention,
-                    #if self.prefill_use_fusedsdpa else None,
-                )
-                '''
-
-                #'''
-                #htorch.core.mark_step()
-               
-
                 block_list = attn_metadata.block_list if attn_metadata \
                 and attn_metadata.block_list is not None else None
 
@@ -715,39 +607,23 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                                                             attn_data.value_cache,
                                                             attn_metadata.block_size)
                 attn_bias = attn_metadata.attn_bias
-                position_bias = None
-                is_causal_ = True
-                if attn_bias is not None:
-                    is_causal_ = False
+                position_bias = None                            
 
-                
-                key_ = self.k_cache.fetch_from_cache(
-                        attn_data.key_cache.unflatten(0, (-1, attn_metadata.block_size)),
-                        attn_metadata.block_list).view(kv_shape)
-                query_=query.view(query_shape)
-                print(f"{key_.shape=}")
-                print(f"{query_.shape=}")
-                print(f"{kv_shape=}")
-
-                
                 out = ops.prompt_attention(
                 impl=self.prefill_impl,
                 query=query.view(query_shape),
+                
                 key=self.k_cache.fetch_from_cache(
                         attn_data.key_cache.unflatten(0, (-1, attn_metadata.block_size)),
                         attn_metadata.block_list).view(kv_shape),
                 value=self.v_cache.fetch_from_cache(
                         attn_data.value_cache.unflatten(0, (-1, attn_metadata.block_size)),
                         attn_metadata.block_list).view(kv_shape),
-                #is_causal=True,#is_causal_,
-                #attn_bias=None,#attn_bias,
-                is_causal=is_causal_,
+                is_causal=False,
                 attn_bias=attn_bias,
                 position_bias=position_bias,
-                #valid_seq_lengths=attn_metadata.seq_lens_tensor,
                 **common_args)
-            #'''
-            #htorch.core.mark_step()
+
             prompt_output = out.reshape(prefill_batch_size, prefill_seq_len,
                                         prefill_hidden_size)
         htorch.core.mark_step()
@@ -760,45 +636,8 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 attn_metadata, False)
             decode_batch_size = attn_data.batch_size
             decode_seq_len = attn_data.seq_len
-            decode_hidden_size = attn_data.hidden_size
-            '''
+            decode_hidden_size = attn_data.hidden_size        
             decode_output = HPUPagedAttention.forward_decode(
-                query=attn_data.query,
-                key_cache=attn_data.key_cache,
-                value_cache=attn_data.value_cache,
-                block_list=attn_metadata.decode_block_list,
-                block_mapping=attn_metadata.block_mapping,
-                block_bias=attn_metadata.decode_attn_bias,
-                block_scales=attn_metadata.block_scales,
-                block_groups=attn_metadata.block_groups,
-                scale=self.scale,
-                matmul_qk_op=self.matmul_qk,
-                matmul_av_op=self.matmul_av,
-                batch2block_matmul_op=self.batch2block_matmul,
-                block2batch_matmul_op=self.block2batch_matmul,
-                keys_fetch_func=self.k_cache.fetch_from_cache_chunked_prefill,#self.k_cache.fetch_from_cache,
-                values_fetch_func=self.v_cache.fetch_from_cache_chunked_prefill)#self.v_cache.fetch_from_cache)
-            '''
-            '''
-            decode_output = HPUPagedAttention.forward_decode(
-                query=attn_data.query,
-                key_cache=attn_data.key_cache,
-                value_cache=attn_data.value_cache,
-                block_list=attn_metadata.decode_block_list,
-                block_mapping=attn_metadata.block_mapping,
-                block_bias=attn_metadata.decode_attn_bias,
-                #block_scales=attn_metadata.block_scales,
-                block_groups=attn_metadata.block_groups,
-                scale=self.scale,
-                matmul_qk_op=self.matmul_qk,
-                matmul_av_op=self.matmul_av,
-                batch2block_matmul_op=self.batch2block_matmul,
-                block2batch_matmul_op=self.block2batch_matmul,
-                keys_fetch_func=self.k_cache.fetch_from_cache,#self.k_cache.fetch_from_cache,
-                values_fetch_func=self.v_cache.fetch_from_cache)#self.v_cache.fetch_from_cache)
-            '''
-            decode_output = HPUPagedAttention.forward_decode(
-                #query=attn_data.query.view(1,1,4096),
                 query=attn_data.query.view(attn_data.batch_size, attn_data.seq_len, attn_data.hidden_size),
                 block_mapping=attn_metadata.block_mapping,
                 block_bias=attn_metadata.decode_attn_bias,

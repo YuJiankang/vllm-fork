@@ -420,7 +420,6 @@ class HpuModelAdapter(torch.nn.Module):
                                dtype):
         
         con_len = context_len.item()
-        print(f"{seq_len=}, {con_len=}, {query_len=}")
         past_mask = torch.arange(0, con_len, dtype=torch.int32, device=device)
         past_mask = (past_mask.view(1, -1).expand(1, -1).ge(con_len).view(
             1, 1, -1).expand(1, seq_len, -1).view(1, 1, seq_len, -1))
@@ -434,12 +433,9 @@ class HpuModelAdapter(torch.nn.Module):
                                  diagonal=1)
         mask = causal_mask.logical_or(len_mask)
         mask = torch.concat((past_mask, mask), dim=-1)
-        mask_= mask.to("cpu")
-        print(f"{mask_=}")
         attn_bias = (torch.zeros_like(mask, dtype=dtype).masked_fill_(
             mask, -math.inf))
-        attn_bias_ = attn_bias.to("cpu")
-        print(f"{attn_bias_=}")
+
         return attn_bias
 
     def _set_attn_bias(self, attn_metadata, batch_size, seq_len, device,
@@ -624,7 +620,6 @@ class HpuModelAdapter(torch.nn.Module):
               seq_lens_t = attn_metadata.seq_lens_tensor
               context_lens_t = attn_metadata.context_lens_tensor
               query_lens_t = seq_lens_t - context_lens_t
-              print(f"{seq_lens_t=}, {context_lens_t=}, {query_lens_t=}")
               
               batch_size = attn_metadata.num_prefills
               seq_len = (int)(attn_metadata.num_prefill_tokens /
@@ -831,7 +826,7 @@ class HpuModelAdapter(torch.nn.Module):
                 self._reset_rotary_cos_sin()
             if not get_pp_group().is_last_rank:
                 return hidden_states
-            token_num_per_seq = hidden_states.shape[1]
+            #token_num_per_seq = hidden_states.shape[1]
             hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
             if selected_token_indices is not None:
                 hidden_states = hidden_states.index_select(
@@ -1663,9 +1658,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             # We should use get_len here because in case of preemption
             # it contains output tokens.
             seq_len = min(seq_data.get_len(), context_len + token_chunk_size)
-            print(f"{seq_len=}")
-            len_=seq_data.get_len()
-            print(f"{len_=}, {context_len=}, {token_chunk_size=}")
             prompt_tokens = seq_data.get_token_ids()[context_len:seq_len]
             seq_lens.append(seq_len)
 
@@ -1697,8 +1689,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             # actual prompt lens
             context_lens.append(context_len)
             query_lens.append(seq_len - context_len)
-            print(f"{seq_len=},{context_len=}")
-            print(f"{query_lens=}")
 
             input_tokens.append(prompt_tokens)
             # NOTE(woosuk): Here we assume that the first token in the prompt
@@ -1780,6 +1770,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     "Prefix caching is currently not supported with "
                     "sliding window attention")
                 start_idx = max(0, seq_len - self.sliding_window)
+            
             for i in range(context_len, seq_len):
                 if i < start_idx:
                     slot_mapping[-1].append(_PAD_SLOT_ID)
@@ -1886,7 +1877,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                        pad=_PAD_SLOT_ID,
                                        dtype=torch.long,
                                        flat=self.use_merged_prefill)
-
         if is_enc_dec_model:
             encoder_seq_lens_tensor = torch.tensor(encoder_seq_lens,
                                                    dtype=torch.int32,
@@ -1910,27 +1900,16 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         num_seqs = self.max_num_prefill_seqs \
             if self.use_merged_prefill else real_num_seqs
         
-        '''
         seq_lens_tensor = make_cpu_tensor([seq_lens],
                                           max_len=num_seqs,
                                           pad=0,
                                           dtype=torch.long,
                                           flat=True).flatten()
-        print(f"{seq_lens_tensor=}, {seq_lens=}, {num_seqs=}")
         context_lens_tensor = make_cpu_tensor([context_lens],
                                               max_len=num_seqs,
                                               pad=0,
                                               dtype=torch.long,
                                               flat=True).flatten()
-        '''
-        seq_lens_tensor = torch.tensor(seq_lens,
-                                       dtype=torch.long,
-                                       device='cpu')
-
-        context_lens_tensor = torch.tensor(context_lens,
-                                           dtype=torch.long,
-                                           device='cpu')
-
         placeholder_index_maps = {
             modality: placeholder_map.index_map()
             for modality, placeholder_map in
@@ -1945,13 +1924,9 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             prefix_block_list_tensor)
         input_tokens_tensor = self.move_to_device(input_tokens_tensor)
         input_positions = self.move_to_device(input_positions)
-        #seq_lens_tensor = self.move_to_device(seq_lens_tensor)
+        seq_lens_tensor = self.move_to_device(seq_lens_tensor)
         slot_mapping = self.move_to_device(slot_mapping)
-        #context_lens_tensor = self.move_to_device(context_lens_tensor)
-        context_lens_tensor = context_lens_tensor.to(self.device,
-                                                     non_blocking=True)
-        seq_lens_tensor = seq_lens_tensor.to(self.device,
-                                                     non_blocking=True)
+        context_lens_tensor = self.move_to_device(context_lens_tensor)
         attn_bias = self.move_to_device(attn_bias)
         if is_enc_dec_model:
             cross_slot_mapping = self.move_to_device(cross_slot_mapping)
@@ -2739,6 +2714,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             model_input, sampling_metadata = self.prepare_input_tensors(
                 seq_group_metadata_list, finished_requests_ids, align_worker)
             assert model_input.attn_metadata is not None
+            #if model_input.attn_metadata is None:
+            #    return
             is_prompt = model_input.attn_metadata.is_prompt
 
         return ModelInputForHPUWithSamplingMetadata(
@@ -2835,11 +2812,10 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def _seq_len(self, attn_metadata):
         if attn_metadata.num_prefills != 0:
             return attn_metadata.slot_mapping.size(1)
+        elif self.scheduler_config.chunked_prefill_enabled:
+            return attn_metadata.decode_block_list.numel()
         else:
-            if self.scheduler_config.chunked_prefill_enabled:
-                return attn_metadata.decode_block_list.numel()
-            else:
-                return attn_metadata.block_list.numel()
+            return attn_metadata.block_list.numel()
 
     def trim_attn_metadata(self, metadata: AttentionMetadata) -> object:
         # NOTE(kzawora): To anyone working on this in the future:
@@ -3040,19 +3016,22 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             logger_msg = "Multimodal bucket : " + str(self.multimodal_buckets)
             logger.info(logger_msg)
 
+        if max_batch_size < 1:
+            max_batch_size = 1
+            max_seq_len = self.max_num_batched_tokens
         logger.info("Profile run with bs=%s, seq_len=%s", \
                     max_batch_size, max_seq_len)
 
-        #self.warmup_scenario(
-        #    batch_size=max_batch_size,
-        #    seq_len=max_seq_len,
-        #    ctx=0,
-        #    is_prompt=True,
-        #    kv_caches=kv_caches,
-        #    is_pt_profiler_run=False,
-        #    img_args=UNSET_IMG_ARGS if self.is_mm_run() else None,
-        #    is_lora_profile_run=True,
-        #)
+        self.warmup_scenario(
+            batch_size=max_batch_size,
+            seq_len=max_seq_len,
+            ctx=0,
+            is_prompt=True,
+            kv_caches=kv_caches,
+            is_pt_profiler_run=False,
+            img_args=UNSET_IMG_ARGS if self.is_mm_run() else None,
+            is_lora_profile_run=True,
+        )
 
         return
 
@@ -3099,7 +3078,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         num_iters=3,
                         align_worker=False,
                         is_dummy_run=False) -> None:
-        return
+        #return
         phase = 'prompt' if is_prompt else 'decode'
         use_graphs = is_dummy_run or self._use_graphs()
 
